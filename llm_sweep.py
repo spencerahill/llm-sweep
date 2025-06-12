@@ -105,6 +105,26 @@ class OpenRouterClient:
             
             return data
             
+        except requests.HTTPError as e:
+            # Handle 400 errors specially to provide better model error messages
+            if hasattr(e, 'response') and e.response and e.response.status_code == 400:
+                try:
+                    error_data = e.response.json()
+                    error_message = error_data.get('error', {}).get('message', str(e))
+                    
+                    # Check if it's likely a model-related error
+                    if any(keyword in error_message.lower() for keyword in ['model', 'not found', 'invalid']):
+                        # Create a custom exception with model context
+                        raise ValueError(f"Invalid model specification: {error_message}")
+                    else:
+                        raise ValueError(f"API error: {error_message}")
+                except (ValueError, KeyError):
+                    # If we can't parse the error response, provide a generic helpful message
+                    if model and model not in self.FREE_MODELS:
+                        raise ValueError(f"Model '{model}' may not be available. Use --list-models to see available options.")
+                    raise ValueError(f"API request failed with 400 error: {e}")
+            else:
+                raise requests.RequestException(f"API request failed: {e}")
         except requests.RequestException as e:
             raise requests.RequestException(f"API request failed: {e}")
     
@@ -430,7 +450,32 @@ Examples:
         return 0
         
     except ValueError as e:
-        print(f"Error: {e}", file=sys.stderr)
+        error_msg = str(e)
+        print(f"Error: {error_msg}", file=sys.stderr)
+        
+        # Provide additional help for model-related errors
+        if "model" in error_msg.lower() and args.model:
+            print(f"\nYou specified model: '{args.model}'", file=sys.stderr)
+            print("Available free models:", file=sys.stderr)
+            try:
+                temp_client = OpenRouterClient()
+                for model in temp_client.list_available_models():
+                    print(f"  - {model}", file=sys.stderr)
+            except:
+                # Fallback to hardcoded list if client creation fails
+                fallback_models = [
+                    "meta-llama/llama-3.1-8b-instruct:free",
+                    "microsoft/phi-3-mini-128k-instruct:free", 
+                    "microsoft/phi-3-medium-128k-instruct:free",
+                    "google/gemma-2-9b-it:free",
+                    "mistralai/mistral-7b-instruct:free",
+                    "huggingfaceh4/zephyr-7b-beta:free",
+                    "openchat/openchat-7b:free"
+                ]
+                for model in fallback_models:
+                    print(f"  - {model}", file=sys.stderr)
+            print("\nUse --list-models to see all available options.", file=sys.stderr)
+        
         return 1
     except requests.RequestException as e:
         print(f"Network error: {e}", file=sys.stderr)

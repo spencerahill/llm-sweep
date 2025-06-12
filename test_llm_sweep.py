@@ -1130,6 +1130,96 @@ class TestPromptFile:
             )
 
 
+class TestErrorHandling:
+    """Test improved error handling functionality"""
+    
+    @patch('llm_sweep.OpenRouterClient')
+    @patch('sys.argv', ['llm_sweep.py', 'Test prompt', '--model', 'invalid-model-name'])
+    def test_invalid_model_error_message(self, mock_client_class):
+        """Test that invalid model names produce helpful error messages"""
+        mock_client = Mock()
+        
+        # Simulate a ValueError that would result from 400 HTTP error with model-related error message
+        mock_client.query_llm.side_effect = ValueError("Invalid model specification: Model 'invalid-model-name' not found")
+        mock_client.list_available_models.return_value = [
+            "meta-llama/llama-3.1-8b-instruct:free",
+            "microsoft/phi-3-mini-128k-instruct:free"
+        ]
+        mock_client_class.return_value = mock_client
+        
+        with patch('sys.stderr', new_callable=StringIO) as mock_stderr:
+            result = main()
+            
+            assert result == 1
+            error_output = mock_stderr.getvalue()
+            assert "Invalid model specification" in error_output
+            assert "invalid-model-name" in error_output
+            assert "Available free models:" in error_output
+            assert "meta-llama/llama-3.1-8b-instruct:free" in error_output
+    
+    @patch('llm_sweep.OpenRouterClient')
+    @patch('sys.argv', ['llm_sweep.py', 'Test prompt', '--model', 'nonexistent-model'])
+    def test_model_not_in_free_list_error(self, mock_client_class):
+        """Test error handling when model is not in the free models list"""
+        mock_client = Mock()
+        
+        # Simulate a ValueError that would result from a 400 error for an invalid model
+        mock_client.query_llm.side_effect = ValueError("Model 'nonexistent-model' may not be available. Use --list-models to see available options.")
+        mock_client.FREE_MODELS = ["meta-llama/llama-3.1-8b-instruct:free"]
+        mock_client.list_available_models.return_value = ["meta-llama/llama-3.1-8b-instruct:free"]
+        mock_client_class.return_value = mock_client
+        
+        with patch('sys.stderr', new_callable=StringIO) as mock_stderr:
+            result = main()
+            
+            assert result == 1
+            error_output = mock_stderr.getvalue()
+            assert "may not be available" in error_output
+            assert "nonexistent-model" in error_output
+            assert "--list-models" in error_output
+    
+    @patch('llm_sweep.OpenRouterClient')
+    @patch('sys.argv', ['llm_sweep.py', 'Test prompt', '--model', 'bad-model'])
+    def test_generic_400_error_with_helpful_message(self, mock_client_class):
+        """Test that 400 errors without parseable details still provide help"""
+        mock_client = Mock()
+        
+        # Simulate a ValueError that would result from a 400 error for an invalid model  
+        mock_client.query_llm.side_effect = ValueError("Model 'bad-model' may not be available. Use --list-models to see available options.")
+        mock_client.FREE_MODELS = ["meta-llama/llama-3.1-8b-instruct:free"]
+        mock_client.list_available_models.return_value = ["meta-llama/llama-3.1-8b-instruct:free"]
+        mock_client_class.return_value = mock_client
+        
+        with patch('sys.stderr', new_callable=StringIO) as mock_stderr:
+            result = main()
+            
+            assert result == 1
+            error_output = mock_stderr.getvalue()
+            assert "may not be available" in error_output
+            assert "bad-model" in error_output
+    
+    @patch('llm_sweep.OpenRouterClient')
+    @patch('sys.argv', ['llm_sweep.py', 'Test prompt', '--model', 'typo-model'])
+    def test_error_fallback_when_client_creation_fails(self, mock_client_class):
+        """Test that error handling works even when client creation fails"""
+        # First client creation succeeds for the main try block
+        mock_client = Mock()
+        mock_client.query_llm.side_effect = ValueError("Invalid model specification: Invalid model typo-model")
+        
+        # But when we try to create a temp client for error handling, it fails
+        mock_client_class.side_effect = [mock_client, Exception("API key error")]
+        
+        with patch('sys.stderr', new_callable=StringIO) as mock_stderr:
+            result = main()
+            
+            assert result == 1
+            error_output = mock_stderr.getvalue()
+            assert "Invalid model specification" in error_output
+            assert "typo-model" in error_output
+            # Should still show available models from fallback
+            assert "meta-llama/llama-3.1-8b-instruct:free" in error_output
+
+
 class TestIntegration:
     """Integration tests that test the full workflow"""
     
