@@ -60,14 +60,14 @@ class OpenRouterClient:
             model: The model to use. If None, uses the first available free model
             max_tokens: Maximum number of tokens in the response
             seed: Random seed for reproducible responses. If None, no seed is used
-            temperature: Controls randomness (0.0-2.0). If None, uses default 0.7
+            temperature: Controls randomness (0.0-2.0). If None, uses the model's default temperature
             
         Returns:
             Dictionary containing the response from the API
             
         Raises:
             requests.RequestException: If the API request fails
-            ValueError: If the response format is unexpected or model is invalid
+            ValueError: If the response format is unexpected
         """
         if model is None:
             model = self.FREE_MODELS[0]  # Default to first free model
@@ -89,10 +89,13 @@ class OpenRouterClient:
                     "content": prompt
                 }
             ],
-            "max_tokens": max_tokens,
-            "temperature": temperature if temperature is not None else 0.7
+            "max_tokens": max_tokens
         }
-        
+
+        # Add temperature only if explicitly provided
+        if temperature is not None:
+            payload["temperature"] = temperature
+
         # Add seed if provided for reproducible responses
         if seed is not None:
             payload["seed"] = seed
@@ -104,36 +107,6 @@ class OpenRouterClient:
                 json=payload,
                 timeout=30
             )
-            
-            # Check for 400 errors before raise_for_status to provide better messages
-            if response.status_code == 400:
-                try:
-                    error_data = response.json()
-                    # Try multiple possible error message locations in the response
-                    error_message = None
-                    
-                    # Common OpenRouter error structures
-                    if 'error' in error_data:
-                        if isinstance(error_data['error'], dict):
-                            error_message = error_data['error'].get('message')
-                        elif isinstance(error_data['error'], str):
-                            error_message = error_data['error']
-                    
-                    # Alternative structure
-                    if not error_message and 'message' in error_data:
-                        error_message = error_data['message']
-                    
-                    # Fallback
-                    if not error_message:
-                        error_message = "Unknown API error"
-                    
-                    # Always convert 400 errors to ValueError for better handling
-                    raise ValueError(f"API request failed: {error_message}")
-                        
-                except (ValueError, KeyError, TypeError) as parse_error:
-                    # If we can't parse the error response at all
-                    raise ValueError(f"API request failed with 400 error - this usually indicates an invalid model name or request format.")
-            
             response.raise_for_status()
             
             data = response.json()
@@ -144,12 +117,26 @@ class OpenRouterClient:
             
             return data
             
-        except ValueError:
-            # Re-raise ValueError exceptions (including our custom ones)
-            raise
         except requests.HTTPError as e:
-            # Handle other HTTP errors
-            raise requests.RequestException(f"API request failed: {e}")
+            # Handle 400 errors specially to provide better model error messages
+            if hasattr(e, 'response') and e.response and e.response.status_code == 400:
+                try:
+                    error_data = e.response.json()
+                    error_message = error_data.get('error', {}).get('message', str(e))
+                    
+                    # Check if it's likely a model-related error
+                    if any(keyword in error_message.lower() for keyword in ['model', 'not found', 'invalid']):
+                        # Create a custom exception with model context
+                        raise ValueError(f"Invalid model specification: {error_message}")
+                    else:
+                        raise ValueError(f"API error: {error_message}")
+                except (ValueError, KeyError):
+                    # If we can't parse the error response, provide a generic helpful message
+                    if model and model not in self.FREE_MODELS:
+                        raise ValueError(f"Model '{model}' may not be available. Use --list-models to see available options.")
+                    raise ValueError(f"API request failed with 400 error: {e}")
+            else:
+                raise requests.RequestException(f"API request failed: {e}")
         except requests.RequestException as e:
             raise requests.RequestException(f"API request failed: {e}")
     

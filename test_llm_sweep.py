@@ -169,9 +169,8 @@ class TestOpenRouterClient:
         client = OpenRouterClient(api_key="test-key")
         client.query_llm("Test prompt")
         
-        # Verify default temperature is used (0.7)
         payload = mock_post.call_args[1]['json']
-        assert payload['temperature'] == 0.7
+        assert 'temperature' not in payload
         assert payload['messages'][0]['content'] == "Test prompt"
     
     @patch('requests.post')
