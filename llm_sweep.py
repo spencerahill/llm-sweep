@@ -12,6 +12,8 @@ import sys
 import argparse
 import requests
 import json
+import time
+import platform
 from typing import Dict, Any, Optional
 
 
@@ -131,6 +133,58 @@ class OpenRouterClient:
         return self.FREE_MODELS.copy()
 
 
+def create_response_record(args, response_data, response_text, start_time, end_time, repetition=1, total_repetitions=1):
+    """Create a structured JSON record for a single response"""
+    record = {
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.%fZ", time.gmtime(start_time)),
+        "prompt": args.prompt,
+        "model": response_data.get('model', args.model or 'meta-llama/llama-3.1-8b-instruct:free'),
+        "parameters": {
+            "max_tokens": args.max_tokens,
+            "repetition": repetition,
+            "total_repetitions": total_repetitions
+        },
+        "response": {
+            "text": response_text
+        },
+        "performance": {
+            "response_time_ms": int((end_time - start_time) * 1000)
+        },
+        "system_info": {
+            "platform": platform.system(),
+            "python_version": platform.python_version()
+        }
+    }
+    
+    # Add optional parameters if they were specified
+    if args.seed is not None:
+        record["parameters"]["seed"] = args.seed
+    if args.temperature is not None:
+        record["parameters"]["temperature"] = args.temperature
+    
+    # Add usage information if available
+    if 'usage' in response_data:
+        usage = response_data['usage']
+        record["performance"].update({
+            "total_tokens": usage.get('total_tokens', 0),
+            "prompt_tokens": usage.get('prompt_tokens', 0),
+            "completion_tokens": usage.get('completion_tokens', 0)
+        })
+    
+    return record
+
+
+def write_json_output(data, output_file):
+    """Write JSON data to file with error handling"""
+    try:
+        with open(output_file, 'w') as f:
+            json.dump(data, f, indent=2)
+        return True
+    except Exception as e:
+        print(f"Error writing JSON output to {output_file}: {e}", file=sys.stderr)
+        return False
+
+
 def main():
     """Main function to handle command line arguments and execute the query"""
     parser = argparse.ArgumentParser(
@@ -147,6 +201,8 @@ Examples:
   python llm_sweep.py "Random story" --repetitions 3 --seed 123 --verbose
   python llm_sweep.py "Write creatively" --temperature 1.2
   python llm_sweep.py "Be precise" --temperature 0.1 --seed 42 --verbose
+  python llm_sweep.py "Analyze this" --output-file results.json
+  python llm_sweep.py "Compare models" --repetitions 5 --output-file experiment.json --verbose
         """
     )
     
@@ -210,7 +266,33 @@ Examples:
         help="Controls randomness (0.0-2.0, default: 0.7)"
     )
     
+    def output_format_type(value):
+        """Validate output format is supported"""
+        valid_formats = ['json']
+        if value.lower() not in valid_formats:
+            raise argparse.ArgumentTypeError(f"Output format must be one of {valid_formats}, got '{value}'")
+        return value.lower()
+    
+    parser.add_argument(
+        "--output-format",
+        type=output_format_type,
+        help="Output format for structured data (json)"
+    )
+    
+    parser.add_argument(
+        "--output-file",
+        help="File to write structured output to (implies --output-format json if format not specified)"
+    )
+    
     args = parser.parse_args()
+    
+    # Validate output arguments
+    if args.output_format and not args.output_file:
+        parser.error("--output-format requires --output-file")
+    
+    # Default to JSON format if output file is specified without format
+    if args.output_file and not args.output_format:
+        args.output_format = 'json'
     
     try:
         client = OpenRouterClient()
@@ -242,11 +324,13 @@ Examples:
             print("-" * 50)
         
         total_tokens = 0
+        json_records = []
         
         for i in range(args.repetitions):
-            if args.repetitions > 1:
+            if args.repetitions > 1 and not args.output_file:
                 print(f"=== Response {i + 1} ===")
             
+            start_time = time.time()
             response_data = client.query_llm(
                 prompt=args.prompt,
                 model=args.model,
@@ -254,9 +338,28 @@ Examples:
                 seed=args.seed,
                 temperature=args.temperature
             )
+            end_time = time.time()
             
             response_text = client.get_response_text(response_data)
-            print(response_text)
+            
+            # Collect data for JSON output if needed
+            if args.output_file:
+                record = create_response_record(
+                    args, response_data, response_text, 
+                    start_time, end_time, 
+                    repetition=i + 1, 
+                    total_repetitions=args.repetitions
+                )
+                json_records.append(record)
+            
+            # Console output (unless writing to file only)
+            if not args.output_file:
+                print(response_text)
+            elif args.verbose:
+                # Still show response in verbose mode even when writing to file
+                if args.repetitions > 1:
+                    print(f"=== Response {i + 1} ===")
+                print(response_text)
             
             if args.verbose:
                 print("-" * 30)
@@ -270,13 +373,21 @@ Examples:
             
             # Add spacing between responses (except for the last one)
             if args.repetitions > 1 and i < args.repetitions - 1:
-                print()
+                if not args.output_file or args.verbose:
+                    print()
         
         if args.verbose and args.repetitions > 1:
             print("-" * 50)
             print(f"Total repetitions: {args.repetitions}")
             print(f"Total tokens used: {total_tokens}")
             print("-" * 50)
+        
+        # Write JSON output if requested
+        if args.output_file:
+            # For single response, write object; for multiple, write array
+            output_data = json_records[0] if args.repetitions == 1 else json_records
+            if not write_json_output(output_data, args.output_file):
+                return 1
         
         return 0
         

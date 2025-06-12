@@ -10,7 +10,7 @@ import pytest
 import requests
 import json
 import os
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch, MagicMock, mock_open
 from llm_sweep import OpenRouterClient, main
 import sys
 from io import StringIO
@@ -756,6 +756,181 @@ class TestMainFunction:
             seed=123,
             temperature=0.3
         )
+
+
+class TestJSONOutput:
+    """Test JSON output functionality"""
+    
+    @patch('llm_sweep.OpenRouterClient')
+    @patch('sys.argv', ['llm_sweep.py', 'Test prompt', '--output-format', 'json', '--output-file', 'test_output.json'])
+    def test_json_output_basic(self, mock_client_class):
+        """Test basic JSON output functionality"""
+        mock_client = Mock()
+        mock_client.query_llm.return_value = {
+            "choices": [{"message": {"content": "Test response"}}],
+            "model": "test-model",
+            "usage": {"total_tokens": 10, "prompt_tokens": 5, "completion_tokens": 5}
+        }
+        mock_client.get_response_text.return_value = "Test response"
+        mock_client_class.return_value = mock_client
+        
+        with patch('builtins.open', mock_open()) as mock_file:
+            with patch('json.dump') as mock_json_dump:
+                result = main()
+                
+                assert result == 0
+                mock_file.assert_called_once_with('test_output.json', 'w')
+                mock_json_dump.assert_called_once()
+                
+                # Check the structure of data passed to json.dump
+                written_data = mock_json_dump.call_args[0][0]
+                assert 'timestamp' in written_data
+                assert 'prompt' in written_data
+                assert 'model' in written_data
+                assert 'parameters' in written_data
+                assert 'response' in written_data
+                assert 'performance' in written_data
+    
+    @patch('llm_sweep.OpenRouterClient')
+    @patch('sys.argv', ['llm_sweep.py', 'Test prompt', '--output-format', 'json', '--output-file', 'test.json', '--temperature', '0.2', '--seed', '42'])
+    def test_json_output_with_parameters(self, mock_client_class):
+        """Test JSON output includes all parameters"""
+        mock_client = Mock()
+        mock_client.query_llm.return_value = {
+            "choices": [{"message": {"content": "Seeded response"}}],
+            "model": "test-model",
+            "usage": {"total_tokens": 15, "prompt_tokens": 8, "completion_tokens": 7}
+        }
+        mock_client.get_response_text.return_value = "Seeded response"
+        mock_client_class.return_value = mock_client
+        
+        with patch('builtins.open', mock_open()) as mock_file:
+            with patch('json.dump') as mock_json_dump:
+                with patch('time.time', return_value=1234567890.123):
+                    result = main()
+                
+                assert result == 0
+                written_data = mock_json_dump.call_args[0][0]
+                
+                # Check parameters are captured
+                assert written_data['parameters']['temperature'] == 0.2
+                assert written_data['parameters']['seed'] == 42
+                assert written_data['parameters']['max_tokens'] == 512
+                assert written_data['prompt'] == 'Test prompt'
+                assert written_data['response']['text'] == 'Seeded response'
+                assert written_data['performance']['total_tokens'] == 15
+    
+    @patch('llm_sweep.OpenRouterClient')
+    @patch('sys.argv', ['llm_sweep.py', 'Test prompt', '--output-format', 'json', '--output-file', 'multi.json', '--repetitions', '2'])
+    def test_json_output_with_repetitions(self, mock_client_class):
+        """Test JSON output with multiple repetitions creates array"""
+        mock_client = Mock()
+        mock_client.query_llm.return_value = {
+            "choices": [{"message": {"content": "Repeated response"}}],
+            "model": "test-model",
+            "usage": {"total_tokens": 12}
+        }
+        mock_client.get_response_text.return_value = "Repeated response"
+        mock_client_class.return_value = mock_client
+        
+        with patch('builtins.open', mock_open()) as mock_file:
+            with patch('json.dump') as mock_json_dump:
+                result = main()
+                
+                assert result == 0
+                written_data = mock_json_dump.call_args[0][0]
+                
+                # Should be an array of responses
+                assert isinstance(written_data, list)
+                assert len(written_data) == 2
+                
+                # Check each response has repetition info
+                assert written_data[0]['parameters']['repetition'] == 1
+                assert written_data[1]['parameters']['repetition'] == 2
+                assert written_data[0]['parameters']['total_repetitions'] == 2
+                assert written_data[1]['parameters']['total_repetitions'] == 2
+    
+    @patch('llm_sweep.OpenRouterClient')
+    @patch('sys.argv', ['llm_sweep.py', 'Test prompt', '--output-format', 'json', '--output-file', '/invalid/path/file.json'])
+    def test_json_output_file_error(self, mock_client_class):
+        """Test handling of file write errors"""
+        mock_client = Mock()
+        mock_client.query_llm.return_value = {
+            "choices": [{"message": {"content": "Test response"}}],
+            "model": "test-model"
+        }
+        mock_client.get_response_text.return_value = "Test response"
+        mock_client_class.return_value = mock_client
+        
+        # Mock file open to raise permission error
+        with patch('builtins.open', side_effect=PermissionError("Permission denied")):
+            with patch('sys.stderr', new_callable=StringIO) as mock_stderr:
+                result = main()
+                
+                assert result == 1  # Should return error code
+                assert "Error writing JSON output" in mock_stderr.getvalue()
+    
+    @patch('llm_sweep.OpenRouterClient')  
+    @patch('sys.argv', ['llm_sweep.py', 'Test prompt', '--output-format', 'invalid'])
+    def test_invalid_output_format(self, mock_client_class):
+        """Test handling of invalid output format"""
+        # Should fail at argument parsing level
+        with pytest.raises(SystemExit):
+            main()
+    
+    @patch('llm_sweep.OpenRouterClient')
+    @patch('sys.argv', ['llm_sweep.py', 'Test prompt', '--output-file', 'output.json'])
+    def test_output_file_without_format(self, mock_client_class):
+        """Test that output file without format defaults to JSON"""
+        mock_client = Mock()
+        mock_client.query_llm.return_value = {
+            "choices": [{"message": {"content": "Default format response"}}],
+            "model": "test-model"
+        }
+        mock_client.get_response_text.return_value = "Default format response"
+        mock_client_class.return_value = mock_client
+        
+        with patch('builtins.open', mock_open()) as mock_file:
+            with patch('json.dump') as mock_json_dump:
+                result = main()
+                
+                assert result == 0
+                mock_file.assert_called_once_with('output.json', 'w')
+                mock_json_dump.assert_called_once()
+    
+    @patch('llm_sweep.OpenRouterClient')
+    @patch('sys.argv', ['llm_sweep.py', 'Test prompt', '--output-format', 'json'])
+    def test_json_format_without_file(self, mock_client_class):
+        """Test JSON format without output file should show error"""
+        with pytest.raises(SystemExit):
+            main()
+    
+    @patch('llm_sweep.OpenRouterClient')
+    @patch('sys.argv', ['llm_sweep.py', 'Test prompt', '--output-file', 'test.json', '--verbose'])
+    def test_json_output_verbose_mode(self, mock_client_class):
+        """Test JSON output works with verbose mode"""
+        mock_client = Mock()
+        mock_client.FREE_MODELS = ["test-model:free"]
+        mock_client.query_llm.return_value = {
+            "choices": [{"message": {"content": "Verbose response"}}],
+            "model": "test-model:free",
+            "usage": {"total_tokens": 20}
+        }
+        mock_client.get_response_text.return_value = "Verbose response"
+        mock_client_class.return_value = mock_client
+        
+        with patch('builtins.open', mock_open()) as mock_file:
+            with patch('json.dump') as mock_json_dump:
+                captured_output = StringIO()
+                with patch('sys.stdout', captured_output):
+                    result = main()
+                
+                assert result == 0
+                # Should still output to console in verbose mode
+                output = captured_output.getvalue()
+                assert "Verbose response" in output
+                # And also write to JSON file
+                mock_json_dump.assert_called_once()
 
 
 class TestIntegration:
