@@ -202,15 +202,44 @@ def create_response_record(args, response_data, response_text, start_time, end_t
     return record
 
 
-def write_json_output(data, output_file):
-    """Write JSON data to file with error handling"""
+def write_json_output(records, output_file, append=True):
+    """Write records to a JSON file.
+    
+    Args:
+        records: List of record dictionaries to write
+        output_file: Path to the output file
+        append: If True, append to existing file. If False, overwrite.
+               Defaults to True.
+    """
+    # Ensure all records have timestamps
+    current_time = time.strftime("%Y-%m-%dT%H:%M:%S.%fZ", time.gmtime())
+    for record in records:
+        if "timestamp" not in record:
+            record["timestamp"] = current_time
+    
     try:
-        with open(output_file, 'w') as f:
-            json.dump(data, f, indent=2)
-        return True
+        if append and os.path.exists(output_file):
+            # Read existing data
+            with open(output_file, 'r') as f:
+                try:
+                    existing_data = json.load(f)
+                    if not isinstance(existing_data, list):
+                        existing_data = [existing_data]
+                except json.JSONDecodeError:
+                    existing_data = []
+            
+            # Append new records
+            existing_data.extend(records)
+            
+            # Write back to file
+            with open(output_file, 'w') as f:
+                json.dump(existing_data, f, indent=2)
+        else:
+            # Write new file
+            with open(output_file, 'w') as f:
+                json.dump(records, f, indent=2)
     except Exception as e:
-        print(f"Error writing JSON output to {output_file}: {e}", file=sys.stderr)
-        return False
+        raise RuntimeError(f"Error writing to output file: {str(e)}")
 
 
 def main():
@@ -452,7 +481,10 @@ Examples:
         if args.output_file:
             # For single response, write object; for multiple, write array
             output_data = json_records[0] if args.repetitions == 1 else json_records
-            if not write_json_output(output_data, args.output_file):
+            try:
+                write_json_output(output_data if isinstance(output_data, list) else [output_data], args.output_file, append=True)
+            except Exception as e:
+                print(f"Error writing JSON output to {args.output_file}: {e}", file=sys.stderr)
                 return 1
         
         return 0

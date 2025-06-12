@@ -11,7 +11,7 @@ import requests
 import json
 import os
 from unittest.mock import Mock, patch, MagicMock, mock_open
-from llm_sweep import OpenRouterClient, main, create_response_record
+from llm_sweep import OpenRouterClient, main, create_response_record, write_json_output
 import sys
 from io import StringIO
 import argparse
@@ -784,12 +784,12 @@ class TestJSONOutput:
                 
                 # Check the structure of data passed to json.dump
                 written_data = mock_json_dump.call_args[0][0]
-                assert 'timestamp' in written_data
-                assert 'prompt' in written_data
-                assert 'model' in written_data
-                assert 'parameters' in written_data
-                assert 'response' in written_data
-                assert 'performance' in written_data
+                assert 'timestamp' in written_data[0]
+                assert 'prompt' in written_data[0]
+                assert 'model' in written_data[0]
+                assert 'parameters' in written_data[0]
+                assert 'response' in written_data[0]
+                assert 'performance' in written_data[0]
     
     @patch('llm_sweep.OpenRouterClient')
     @patch('sys.argv', ['llm_sweep.py', 'Test prompt', '--output-format', 'json', '--output-file', 'test.json', '--temperature', '0.2', '--seed', '42'])
@@ -813,12 +813,12 @@ class TestJSONOutput:
                 written_data = mock_json_dump.call_args[0][0]
                 
                 # Check parameters are captured
-                assert written_data['parameters']['temperature'] == 0.2
-                assert written_data['parameters']['seed'] == 42
-                assert written_data['parameters']['max_tokens'] == 512
-                assert written_data['prompt'] == 'Test prompt'
-                assert written_data['response']['text'] == 'Seeded response'
-                assert written_data['performance']['total_tokens'] == 15
+                assert written_data[0]['parameters']['temperature'] == 0.2
+                assert written_data[0]['parameters']['seed'] == 42
+                assert written_data[0]['parameters']['max_tokens'] == 512
+                assert written_data[0]['prompt'] == 'Test prompt'
+                assert written_data[0]['response']['text'] == 'Seeded response'
+                assert written_data[0]['performance']['total_tokens'] == 15
     
     @patch('llm_sweep.OpenRouterClient')
     @patch('sys.argv', ['llm_sweep.py', 'Test prompt', '--output-format', 'json', '--output-file', 'multi.json', '--repetitions', '2'])
@@ -931,6 +931,106 @@ class TestJSONOutput:
                 assert "Verbose response" in output
                 # And also write to JSON file
                 mock_json_dump.assert_called_once()
+
+    def test_json_output_append_to_existing(self):
+        """Test appending to an existing JSON file"""
+        # Create initial file with one record
+        initial_data = [{
+            "timestamp": "2024-01-01T00:00:00.000Z",
+            "model": "test-model",
+            "prompt": "test prompt 1",
+            "response": {"text": "test response 1"},
+            "parameters": {
+                "max_tokens": 100,
+                "seed": None,
+                "temperature": None
+            }
+        }]
+        
+        # Write initial data
+        with patch('builtins.open', mock_open()) as mock_file:
+            write_json_output(initial_data, "test.json")
+            mock_file.assert_called_once_with("test.json", 'w')
+        
+        # Create new record to append
+        new_record = {
+            "timestamp": "2024-01-01T00:00:01.000Z",
+            "model": "test-model",
+            "prompt": "test prompt 2",
+            "response": {"text": "test response 2"},
+            "parameters": {
+                "max_tokens": 100,
+                "seed": None,
+                "temperature": None
+            }
+        }
+        
+        # Append new record
+        m = mock_open(read_data=json.dumps(initial_data))
+        with patch('builtins.open', m) as mock_file:
+            with patch('os.path.exists', return_value=True):
+                write_json_output([new_record], "test.json", append=True)
+                # Should open for reading and then for writing
+                mock_file.assert_any_call("test.json", 'r')
+                mock_file.assert_any_call("test.json", 'w')
+                # Verify the write call contains both records
+                handle = mock_file()
+                write_calls = [call for call in handle.write.mock_calls]
+                assert len(write_calls) > 0
+                written_data = json.loads(''.join(call.args[0] for call in write_calls))
+                assert len(written_data) == 2
+                assert written_data[0] == initial_data[0]
+                assert written_data[1] == new_record
+
+    def test_json_output_append_nonexistent_file(self):
+        """Test appending to a nonexistent file creates new file"""
+        record = {
+            "timestamp": "2024-01-01T00:00:00.000Z",
+            "model": "test-model",
+            "prompt": "test prompt",
+            "response": {"text": "test response"},
+            "parameters": {
+                "max_tokens": 100,
+                "seed": None,
+                "temperature": None
+            }
+        }
+        m = mock_open()
+        with patch('builtins.open', m) as mock_file:
+            with patch('os.path.exists', return_value=False):
+                write_json_output([record], "test.json", append=True)
+                mock_file.assert_called_with("test.json", 'w')
+                handle = mock_file()
+                write_calls = [call for call in handle.write.mock_calls]
+                assert len(write_calls) > 0
+                written_data = json.loads(''.join(call.args[0] for call in write_calls))
+                assert len(written_data) == 1
+                assert written_data[0] == record
+
+    def test_json_output_always_includes_timestamp(self):
+        """Test that all records include a timestamp"""
+        record = {
+            "model": "test-model",
+            "prompt": "test prompt",
+            "response": {"text": "test response"},
+            "parameters": {
+                "max_tokens": 100,
+                "seed": None,
+                "temperature": None
+            }
+        }
+        m = mock_open()
+        with patch('builtins.open', m) as mock_file:
+            write_json_output([record], "test.json")
+            handle = mock_file()
+            write_calls = [call for call in handle.write.mock_calls]
+            assert len(write_calls) > 0
+            written_data = json.loads(''.join(call.args[0] for call in write_calls))
+            assert "timestamp" in written_data[0]
+            assert isinstance(written_data[0]["timestamp"], str)
+            # Verify timestamp is in ISO format
+            assert "T" in written_data[0]["timestamp"]
+            assert "Z" in written_data[0]["timestamp"]
 
 
 class TestPromptFile:
@@ -1101,7 +1201,7 @@ class TestPromptFile:
                 
                 # Verify prompt from file was used in JSON
                 written_data = mock_json_dump.call_args[0][0]
-                assert written_data['prompt'] == "File prompt for JSON"
+                assert written_data[0]['prompt'] == "File prompt for JSON"
     
     @patch('llm_sweep.OpenRouterClient')
     @patch('sys.argv', ['llm_sweep.py', '--prompt-file', 'large.txt'])
