@@ -49,7 +49,7 @@ class OpenRouterClient:
             "X-Title": "LLM Sweep Script"  # Optional: for tracking
         }
     
-    def query_llm(self, prompt: str, model: Optional[str] = None, max_tokens: int = 512) -> Dict[str, Any]:
+    def query_llm(self, prompt: str, model: Optional[str] = None, max_tokens: int = 512, seed: Optional[int] = None) -> Dict[str, Any]:
         """
         Send a query to the specified LLM model
         
@@ -57,6 +57,7 @@ class OpenRouterClient:
             prompt: The text prompt to send to the model
             model: The model to use. If None, uses the first available free model
             max_tokens: Maximum number of tokens in the response
+            seed: Random seed for reproducible responses. If None, no seed is used
             
         Returns:
             Dictionary containing the response from the API
@@ -79,6 +80,10 @@ class OpenRouterClient:
             "max_tokens": max_tokens,
             "temperature": 0.7
         }
+        
+        # Add seed if provided for reproducible responses
+        if seed is not None:
+            payload["seed"] = seed
         
         try:
             response = requests.post(
@@ -137,6 +142,8 @@ Examples:
   python llm_sweep.py "Write a haiku about programming" --max-tokens 100
   python llm_sweep.py "Generate a creative story" --repetitions 3
   python llm_sweep.py "What's your favorite color?" --repetitions 5 --verbose
+  python llm_sweep.py "Tell me a joke" --seed 42
+  python llm_sweep.py "Random story" --repetitions 3 --seed 123 --verbose
         """
     )
     
@@ -178,6 +185,12 @@ Examples:
         help="Number of times to repeat the prompt (default: 1)"
     )
     
+    parser.add_argument(
+        "--seed",
+        type=int,
+        help="Random seed for reproducible responses"
+    )
+    
     args = parser.parse_args()
     
     try:
@@ -203,6 +216,8 @@ Examples:
             print(f"Sending prompt to model: {args.model or client.FREE_MODELS[0]}")
             print(f"Prompt: {args.prompt}")
             print(f"Repetitions: {args.repetitions}")
+            if args.seed is not None:
+                print(f"Seed: {args.seed}")
             print("-" * 50)
         
         total_tokens = 0
@@ -214,7 +229,8 @@ Examples:
             response_data = client.query_llm(
                 prompt=args.prompt,
                 model=args.model,
-                max_tokens=args.max_tokens
+                max_tokens=args.max_tokens,
+                seed=args.seed
             )
             
             response_text = client.get_response_text(response_data)

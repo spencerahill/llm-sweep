@@ -103,6 +103,42 @@ class TestOpenRouterClient:
         assert payload['model'] == "google/gemma-2-9b-it:free"
     
     @patch('requests.post')
+    def test_query_llm_with_seed(self, mock_post):
+        """Test LLM query with seed parameter for reproducibility"""
+        mock_response = Mock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = {
+            "choices": [{"message": {"content": "Seeded response"}}]
+        }
+        mock_post.return_value = mock_response
+        
+        client = OpenRouterClient(api_key="test-key")
+        client.query_llm("Test prompt", seed=42)
+        
+        # Verify seed was included in the payload
+        payload = mock_post.call_args[1]['json']
+        assert payload['seed'] == 42
+        assert payload['messages'][0]['content'] == "Test prompt"
+    
+    @patch('requests.post')
+    def test_query_llm_without_seed(self, mock_post):
+        """Test LLM query without seed parameter (default behavior)"""
+        mock_response = Mock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = {
+            "choices": [{"message": {"content": "Non-seeded response"}}]
+        }
+        mock_post.return_value = mock_response
+        
+        client = OpenRouterClient(api_key="test-key")
+        client.query_llm("Test prompt")
+        
+        # Verify seed is not in the payload when not specified
+        payload = mock_post.call_args[1]['json']
+        assert 'seed' not in payload
+        assert payload['messages'][0]['content'] == "Test prompt"
+    
+    @patch('requests.post')
     def test_query_llm_request_exception(self, mock_post):
         """Test handling of request exceptions"""
         mock_post.side_effect = requests.RequestException("Network error")
@@ -193,7 +229,8 @@ class TestMainFunction:
         mock_client.query_llm.assert_called_once_with(
             prompt="Test prompt",
             model=None,
-            max_tokens=512
+            max_tokens=512,
+            seed=None
         )
     
     @patch('llm_sweep.OpenRouterClient')
@@ -236,7 +273,8 @@ class TestMainFunction:
         mock_client.query_llm.assert_called_once_with(
             prompt="Test prompt",
             model="custom-model",
-            max_tokens=256
+            max_tokens=256,
+            seed=None
         )
     
     @patch('llm_sweep.OpenRouterClient')
@@ -417,6 +455,104 @@ class TestMainFunction:
         
         # Should call query_llm only once
         assert mock_client.query_llm.call_count == 1
+    
+    @patch('llm_sweep.OpenRouterClient')
+    @patch('sys.argv', ['llm_sweep.py', 'Test prompt', '--seed', '42'])
+    def test_main_with_seed(self, mock_client_class):
+        """Test that seed parameter is passed to the LLM query"""
+        mock_client = Mock()
+        mock_client.query_llm.return_value = {
+            "choices": [{"message": {"content": "Seeded response"}}],
+            "model": "test-model"
+        }
+        mock_client.get_response_text.return_value = "Seeded response"
+        mock_client_class.return_value = mock_client
+        
+        captured_output = StringIO()
+        with patch('sys.stdout', captured_output):
+            result = main()
+        
+        assert result == 0
+        assert "Seeded response" in captured_output.getvalue()
+        
+        # Verify that query_llm was called with the seed parameter
+        mock_client.query_llm.assert_called_once_with(
+            prompt="Test prompt",
+            model=None,
+            max_tokens=512,
+            seed=42
+        )
+    
+    @patch('llm_sweep.OpenRouterClient')
+    @patch('sys.argv', ['llm_sweep.py', 'Test prompt', '--seed', '123', '--verbose'])
+    def test_main_with_seed_verbose(self, mock_client_class):
+        """Test that seed is shown in verbose output"""
+        mock_client = Mock()
+        mock_client.FREE_MODELS = ["test-model:free"]
+        mock_client.query_llm.return_value = {
+            "choices": [{"message": {"content": "Seeded verbose response"}}],
+            "model": "test-model:free",
+            "usage": {"total_tokens": 15}
+        }
+        mock_client.get_response_text.return_value = "Seeded verbose response"
+        mock_client_class.return_value = mock_client
+        
+        captured_output = StringIO()
+        with patch('sys.stdout', captured_output):
+            result = main()
+        
+        assert result == 0
+        output = captured_output.getvalue()
+        
+        # Should show seed in verbose output
+        assert "Seed: 123" in output
+        assert "Seeded verbose response" in output
+        
+        # Verify query_llm was called with seed
+        mock_client.query_llm.assert_called_once_with(
+            prompt="Test prompt",
+            model=None,
+            max_tokens=512,
+            seed=123
+        )
+    
+    @patch('llm_sweep.OpenRouterClient')
+    @patch('sys.argv', ['llm_sweep.py', 'Test prompt', '--repetitions', '2', '--seed', '999'])
+    def test_main_seed_with_repetitions(self, mock_client_class):
+        """Test that same seed is used for all repetitions"""
+        mock_client = Mock()
+        mock_client.query_llm.return_value = {
+            "choices": [{"message": {"content": "Consistent response"}}],
+            "model": "test-model"
+        }
+        mock_client.get_response_text.return_value = "Consistent response"
+        mock_client_class.return_value = mock_client
+        
+        captured_output = StringIO()
+        with patch('sys.stdout', captured_output):
+            result = main()
+        
+        assert result == 0
+        output = captured_output.getvalue()
+        
+        # Should have multiple responses
+        assert "=== Response 1 ===" in output
+        assert "=== Response 2 ===" in output
+        
+        # Verify query_llm was called twice with the same seed
+        assert mock_client.query_llm.call_count == 2
+        for call in mock_client.query_llm.call_args_list:
+            args, kwargs = call
+            # Check that seed=999 was passed in kwargs or as positional arg
+            assert kwargs.get('seed') == 999 or (len(args) > 3 and args[3] == 999)
+    
+    @patch('llm_sweep.OpenRouterClient')
+    @patch('sys.argv', ['llm_sweep.py', 'Test prompt', '--seed', 'invalid'])
+    def test_main_invalid_seed(self, mock_client_class):
+        """Test handling of invalid seed values"""
+        # This should fail at argument parsing level
+        with pytest.raises(SystemExit):
+            main()
 
 
 class TestIntegration:
