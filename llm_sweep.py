@@ -133,11 +133,11 @@ class OpenRouterClient:
         return self.FREE_MODELS.copy()
 
 
-def create_response_record(args, response_data, response_text, start_time, end_time, repetition=1, total_repetitions=1):
+def create_response_record(args, response_data, response_text, start_time, end_time, prompt_text, repetition=1, total_repetitions=1):
     """Create a structured JSON record for a single response"""
     record = {
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.%fZ", time.gmtime(start_time)),
-        "prompt": args.prompt,
+        "prompt": prompt_text,
         "model": response_data.get('model', args.model or 'meta-llama/llama-3.1-8b-instruct:free'),
         "parameters": {
             "max_tokens": args.max_tokens,
@@ -203,6 +203,9 @@ Examples:
   python llm_sweep.py "Be precise" --temperature 0.1 --seed 42 --verbose
   python llm_sweep.py "Analyze this" --output-file results.json
   python llm_sweep.py "Compare models" --repetitions 5 --output-file experiment.json --verbose
+  python llm_sweep.py --prompt-file my_prompt.txt
+  python llm_sweep.py --prompt-file long_essay.txt --repetitions 3 --seed 42 --verbose
+  python llm_sweep.py --prompt-file research_query.txt --output-file analysis.json
         """
     )
     
@@ -284,6 +287,11 @@ Examples:
         help="File to write structured output to (implies --output-format json if format not specified)"
     )
     
+    parser.add_argument(
+        "--prompt-file",
+        help="Read prompt from a text file (mutually exclusive with positional prompt argument)"
+    )
+    
     args = parser.parse_args()
     
     # Validate output arguments
@@ -293,6 +301,34 @@ Examples:
     # Default to JSON format if output file is specified without format
     if args.output_file and not args.output_format:
         args.output_format = 'json'
+    
+    # Validate prompt arguments - exactly one of prompt or prompt_file must be provided
+    if args.prompt and args.prompt_file:
+        parser.error("Cannot specify both prompt argument and --prompt-file option")
+    
+    # Read prompt from file if specified
+    prompt_text = None
+    if args.prompt_file:
+        try:
+            with open(args.prompt_file, 'r', encoding='utf-8') as f:
+                prompt_text = f.read()
+            
+            # Check if file is empty or contains only whitespace
+            if not prompt_text.strip():
+                print("Error: prompt file is empty", file=sys.stderr)
+                return 1
+                
+        except FileNotFoundError:
+            print(f"Error reading prompt file '{args.prompt_file}': File not found", file=sys.stderr)
+            return 1
+        except PermissionError:
+            print(f"Error reading prompt file '{args.prompt_file}': Permission denied", file=sys.stderr)
+            return 1
+        except Exception as e:
+            print(f"Error reading prompt file '{args.prompt_file}': {e}", file=sys.stderr)
+            return 1
+    else:
+        prompt_text = args.prompt
     
     try:
         client = OpenRouterClient()
@@ -304,7 +340,7 @@ Examples:
             return 0
         
         # Validate that prompt is provided when not listing models
-        if not args.prompt:
+        if not prompt_text:
             print("Error: prompt is required when not using --list-models", file=sys.stderr)
             return 1
         
@@ -315,7 +351,9 @@ Examples:
         
         if args.verbose:
             print(f"Sending prompt to model: {args.model or client.FREE_MODELS[0]}")
-            print(f"Prompt: {args.prompt}")
+            if args.prompt_file:
+                print(f"Prompt file: {args.prompt_file}")
+            print(f"Prompt: {prompt_text}")
             print(f"Repetitions: {args.repetitions}")
             if args.seed is not None:
                 print(f"Seed: {args.seed}")
@@ -332,7 +370,7 @@ Examples:
             
             start_time = time.time()
             response_data = client.query_llm(
-                prompt=args.prompt,
+                prompt=prompt_text,
                 model=args.model,
                 max_tokens=args.max_tokens,
                 seed=args.seed,
@@ -346,7 +384,7 @@ Examples:
             if args.output_file:
                 record = create_response_record(
                     args, response_data, response_text, 
-                    start_time, end_time, 
+                    start_time, end_time, prompt_text,
                     repetition=i + 1, 
                     total_repetitions=args.repetitions
                 )

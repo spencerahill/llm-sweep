@@ -933,6 +933,203 @@ class TestJSONOutput:
                 mock_json_dump.assert_called_once()
 
 
+class TestPromptFile:
+    """Test prompt file reading functionality"""
+    
+    @patch('llm_sweep.OpenRouterClient')
+    @patch('sys.argv', ['llm_sweep.py', '--prompt-file', 'test_prompt.txt'])
+    def test_prompt_file_basic(self, mock_client_class):
+        """Test basic prompt file reading functionality"""
+        mock_client = Mock()
+        mock_client.query_llm.return_value = {
+            "choices": [{"message": {"content": "File response"}}],
+            "model": "test-model"
+        }
+        mock_client.get_response_text.return_value = "File response"
+        mock_client_class.return_value = mock_client
+        
+        # Mock file reading
+        with patch('builtins.open', mock_open(read_data="This is a prompt from file")):
+            captured_output = StringIO()
+            with patch('sys.stdout', captured_output):
+                result = main()
+            
+            assert result == 0
+            assert "File response" in captured_output.getvalue()
+            
+            # Verify prompt from file was used
+            mock_client.query_llm.assert_called_once_with(
+                prompt="This is a prompt from file",
+                model=None,
+                max_tokens=512,
+                seed=None,
+                temperature=None
+            )
+    
+    @patch('llm_sweep.OpenRouterClient')
+    @patch('sys.argv', ['llm_sweep.py', '--prompt-file', 'nonexistent.txt'])
+    def test_prompt_file_not_found(self, mock_client_class):
+        """Test handling of non-existent prompt file"""
+        # Mock file not found error
+        with patch('builtins.open', side_effect=FileNotFoundError("No such file")):
+            with patch('sys.stderr', new_callable=StringIO) as mock_stderr:
+                result = main()
+                
+                assert result == 1
+                assert "Error reading prompt file" in mock_stderr.getvalue()
+                assert "nonexistent.txt" in mock_stderr.getvalue()
+    
+    @patch('llm_sweep.OpenRouterClient')
+    @patch('sys.argv', ['llm_sweep.py', '--prompt-file', 'restricted.txt'])
+    def test_prompt_file_permission_denied(self, mock_client_class):
+        """Test handling of permission denied for prompt file"""
+        # Mock permission error
+        with patch('builtins.open', side_effect=PermissionError("Permission denied")):
+            with patch('sys.stderr', new_callable=StringIO) as mock_stderr:
+                result = main()
+                
+                assert result == 1
+                assert "Error reading prompt file" in mock_stderr.getvalue()
+                assert "restricted.txt" in mock_stderr.getvalue()
+    
+    @patch('llm_sweep.OpenRouterClient')
+    @patch('sys.argv', ['llm_sweep.py', '--prompt-file', 'empty.txt'])
+    def test_prompt_file_empty(self, mock_client_class):
+        """Test handling of empty prompt file"""
+        # Mock empty file
+        with patch('builtins.open', mock_open(read_data="")):
+            with patch('sys.stderr', new_callable=StringIO) as mock_stderr:
+                result = main()
+                
+                assert result == 1
+                assert "Error: prompt file is empty" in mock_stderr.getvalue()
+    
+    @patch('llm_sweep.OpenRouterClient')
+    @patch('sys.argv', ['llm_sweep.py', '--prompt-file', 'whitespace.txt'])
+    def test_prompt_file_whitespace_only(self, mock_client_class):
+        """Test handling of prompt file with only whitespace"""
+        # Mock file with only whitespace
+        with patch('builtins.open', mock_open(read_data="   \n\t  \n  ")):
+            with patch('sys.stderr', new_callable=StringIO) as mock_stderr:
+                result = main()
+                
+                assert result == 1
+                assert "Error: prompt file is empty" in mock_stderr.getvalue()
+    
+    @patch('llm_sweep.OpenRouterClient')
+    @patch('sys.argv', ['llm_sweep.py', '--prompt-file', 'multiline.txt'])
+    def test_prompt_file_multiline(self, mock_client_class):
+        """Test prompt file with multiple lines"""
+        mock_client = Mock()
+        mock_client.query_llm.return_value = {
+            "choices": [{"message": {"content": "Multiline response"}}],
+            "model": "test-model"
+        }
+        mock_client.get_response_text.return_value = "Multiline response"
+        mock_client_class.return_value = mock_client
+        
+        multiline_prompt = "Line 1\nLine 2\nLine 3"
+        with patch('builtins.open', mock_open(read_data=multiline_prompt)):
+            result = main()
+            
+            assert result == 0
+            # Verify multiline prompt was preserved
+            mock_client.query_llm.assert_called_once_with(
+                prompt=multiline_prompt,
+                model=None,
+                max_tokens=512,
+                seed=None,
+                temperature=None
+            )
+    
+    @patch('llm_sweep.OpenRouterClient')
+    @patch('sys.argv', ['llm_sweep.py', 'Direct prompt', '--prompt-file', 'file.txt'])
+    def test_prompt_and_file_mutual_exclusive(self, mock_client_class):
+        """Test that prompt and prompt-file are mutually exclusive"""
+        with pytest.raises(SystemExit):
+            main()
+    
+    @patch('llm_sweep.OpenRouterClient')
+    @patch('sys.argv', ['llm_sweep.py', '--prompt-file', 'test.txt', '--seed', '42', '--temperature', '0.2'])
+    def test_prompt_file_with_parameters(self, mock_client_class):
+        """Test prompt file works with other parameters"""
+        mock_client = Mock()
+        mock_client.query_llm.return_value = {
+            "choices": [{"message": {"content": "Parameterized response"}}],
+            "model": "test-model"
+        }
+        mock_client.get_response_text.return_value = "Parameterized response"
+        mock_client_class.return_value = mock_client
+        
+        with patch('builtins.open', mock_open(read_data="File prompt with params")):
+            result = main()
+            
+            assert result == 0
+            mock_client.query_llm.assert_called_once_with(
+                prompt="File prompt with params",
+                model=None,
+                max_tokens=512,
+                seed=42,
+                temperature=0.2
+            )
+    
+    @patch('llm_sweep.OpenRouterClient')
+    @patch('sys.argv', ['llm_sweep.py', '--prompt-file', 'test.txt', '--output-file', 'output.json'])
+    def test_prompt_file_with_json_output(self, mock_client_class):
+        """Test prompt file works with JSON output"""
+        mock_client = Mock()
+        mock_client.query_llm.return_value = {
+            "choices": [{"message": {"content": "JSON output response"}}],
+            "model": "test-model",
+            "usage": {"total_tokens": 20}
+        }
+        mock_client.get_response_text.return_value = "JSON output response"
+        mock_client_class.return_value = mock_client
+        
+        with patch('builtins.open', mock_open(read_data="File prompt for JSON")) as mock_file:
+            with patch('json.dump') as mock_json_dump:
+                result = main()
+                
+                assert result == 0
+                
+                # Verify file was read
+                mock_file.assert_any_call('test.txt', 'r', encoding='utf-8')
+                
+                # Verify JSON output was written
+                mock_file.assert_any_call('output.json', 'w')
+                mock_json_dump.assert_called_once()
+                
+                # Verify prompt from file was used in JSON
+                written_data = mock_json_dump.call_args[0][0]
+                assert written_data['prompt'] == "File prompt for JSON"
+    
+    @patch('llm_sweep.OpenRouterClient')
+    @patch('sys.argv', ['llm_sweep.py', '--prompt-file', 'large.txt'])
+    def test_prompt_file_large(self, mock_client_class):
+        """Test prompt file with large content"""
+        mock_client = Mock()
+        mock_client.query_llm.return_value = {
+            "choices": [{"message": {"content": "Large file response"}}],
+            "model": "test-model"
+        }
+        mock_client.get_response_text.return_value = "Large file response"
+        mock_client_class.return_value = mock_client
+        
+        # Create a large prompt (simulate large file)
+        large_prompt = "This is a very long prompt. " * 1000
+        with patch('builtins.open', mock_open(read_data=large_prompt)):
+            result = main()
+            
+            assert result == 0
+            mock_client.query_llm.assert_called_once_with(
+                prompt=large_prompt,
+                model=None,
+                max_tokens=512,
+                seed=None,
+                temperature=None
+            )
+
+
 class TestIntegration:
     """Integration tests that test the full workflow"""
     
