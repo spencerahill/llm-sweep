@@ -3,7 +3,6 @@
 A Python script that queries free Large Language Models (LLMs) via OpenRouter.ai API.
 
 [![Python Tests](https://github.com/spencerahill/llm-sweep/actions/workflows/tests.yml/badge.svg)](https://github.com/spencerahill/llm-sweep/actions/workflows/tests.yml)
-[![codecov](https://codecov.io/gh/spencerahill/llm-sweep/branch/main/graph/badge.svg)](https://codecov.io/gh/spencerahill/llm-sweep)
 
 ## Features
 
