@@ -67,11 +67,20 @@ class OpenRouterClient:
             
         Raises:
             requests.RequestException: If the API request fails
-            ValueError: If the response format is unexpected
+            ValueError: If the response format is unexpected or model is invalid
         """
         if model is None:
             model = self.FREE_MODELS[0]  # Default to first free model
         
+        # Pre-validate model name to give better error messages
+        if model and model not in self.FREE_MODELS:
+            # Check for common mistakes
+            if '/' in model and model.count('/') > 1:
+                # Model looks malformed (like "qwen/google/gemma-2-9b-it:free")
+                raise ValueError(f"Model name '{model}' appears to be malformed. Check the format - it should be 'provider/model-name:free'.")
+            else:
+                raise ValueError(f"Model '{model}' is not in the list of available free models. Use --list-models to see available options.")
+
         payload = {
             "model": model,
             "messages": [
@@ -95,6 +104,36 @@ class OpenRouterClient:
                 json=payload,
                 timeout=30
             )
+            
+            # Check for 400 errors before raise_for_status to provide better messages
+            if response.status_code == 400:
+                try:
+                    error_data = response.json()
+                    # Try multiple possible error message locations in the response
+                    error_message = None
+                    
+                    # Common OpenRouter error structures
+                    if 'error' in error_data:
+                        if isinstance(error_data['error'], dict):
+                            error_message = error_data['error'].get('message')
+                        elif isinstance(error_data['error'], str):
+                            error_message = error_data['error']
+                    
+                    # Alternative structure
+                    if not error_message and 'message' in error_data:
+                        error_message = error_data['message']
+                    
+                    # Fallback
+                    if not error_message:
+                        error_message = "Unknown API error"
+                    
+                    # Always convert 400 errors to ValueError for better handling
+                    raise ValueError(f"API request failed: {error_message}")
+                        
+                except (ValueError, KeyError, TypeError) as parse_error:
+                    # If we can't parse the error response at all
+                    raise ValueError(f"API request failed with 400 error - this usually indicates an invalid model name or request format.")
+            
             response.raise_for_status()
             
             data = response.json()
@@ -105,26 +144,12 @@ class OpenRouterClient:
             
             return data
             
+        except ValueError:
+            # Re-raise ValueError exceptions (including our custom ones)
+            raise
         except requests.HTTPError as e:
-            # Handle 400 errors specially to provide better model error messages
-            if hasattr(e, 'response') and e.response and e.response.status_code == 400:
-                try:
-                    error_data = e.response.json()
-                    error_message = error_data.get('error', {}).get('message', str(e))
-                    
-                    # Check if it's likely a model-related error
-                    if any(keyword in error_message.lower() for keyword in ['model', 'not found', 'invalid']):
-                        # Create a custom exception with model context
-                        raise ValueError(f"Invalid model specification: {error_message}")
-                    else:
-                        raise ValueError(f"API error: {error_message}")
-                except (ValueError, KeyError):
-                    # If we can't parse the error response, provide a generic helpful message
-                    if model and model not in self.FREE_MODELS:
-                        raise ValueError(f"Model '{model}' may not be available. Use --list-models to see available options.")
-                    raise ValueError(f"API request failed with 400 error: {e}")
-            else:
-                raise requests.RequestException(f"API request failed: {e}")
+            # Handle other HTTP errors
+            raise requests.RequestException(f"API request failed: {e}")
         except requests.RequestException as e:
             raise requests.RequestException(f"API request failed: {e}")
     
