@@ -139,6 +139,61 @@ class TestOpenRouterClient:
         assert payload['messages'][0]['content'] == "Test prompt"
     
     @patch('requests.post')
+    def test_query_llm_with_temperature(self, mock_post):
+        """Test LLM query with custom temperature parameter"""
+        mock_response = Mock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = {
+            "choices": [{"message": {"content": "Temperature controlled response"}}]
+        }
+        mock_post.return_value = mock_response
+        
+        client = OpenRouterClient(api_key="test-key")
+        client.query_llm("Test prompt", temperature=0.2)
+        
+        # Verify temperature was included in the payload
+        payload = mock_post.call_args[1]['json']
+        assert payload['temperature'] == 0.2
+        assert payload['messages'][0]['content'] == "Test prompt"
+    
+    @patch('requests.post')
+    def test_query_llm_without_temperature(self, mock_post):
+        """Test LLM query uses default temperature when not specified"""
+        mock_response = Mock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = {
+            "choices": [{"message": {"content": "Default temperature response"}}]
+        }
+        mock_post.return_value = mock_response
+        
+        client = OpenRouterClient(api_key="test-key")
+        client.query_llm("Test prompt")
+        
+        # Verify default temperature is used (0.7)
+        payload = mock_post.call_args[1]['json']
+        assert payload['temperature'] == 0.7
+        assert payload['messages'][0]['content'] == "Test prompt"
+    
+    @patch('requests.post')
+    def test_query_llm_with_temperature_and_seed(self, mock_post):
+        """Test LLM query with both temperature and seed parameters"""
+        mock_response = Mock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = {
+            "choices": [{"message": {"content": "Controlled response"}}]
+        }
+        mock_post.return_value = mock_response
+        
+        client = OpenRouterClient(api_key="test-key")
+        client.query_llm("Test prompt", temperature=0.1, seed=42)
+        
+        # Verify both temperature and seed are in the payload
+        payload = mock_post.call_args[1]['json']
+        assert payload['temperature'] == 0.1
+        assert payload['seed'] == 42
+        assert payload['messages'][0]['content'] == "Test prompt"
+    
+    @patch('requests.post')
     def test_query_llm_request_exception(self, mock_post):
         """Test handling of request exceptions"""
         mock_post.side_effect = requests.RequestException("Network error")
@@ -230,7 +285,8 @@ class TestMainFunction:
             prompt="Test prompt",
             model=None,
             max_tokens=512,
-            seed=None
+            seed=None,
+            temperature=None
         )
     
     @patch('llm_sweep.OpenRouterClient')
@@ -274,7 +330,8 @@ class TestMainFunction:
             prompt="Test prompt",
             model="custom-model",
             max_tokens=256,
-            seed=None
+            seed=None,
+            temperature=None
         )
     
     @patch('llm_sweep.OpenRouterClient')
@@ -480,7 +537,8 @@ class TestMainFunction:
             prompt="Test prompt",
             model=None,
             max_tokens=512,
-            seed=42
+            seed=42,
+            temperature=None
         )
     
     @patch('llm_sweep.OpenRouterClient')
@@ -513,7 +571,8 @@ class TestMainFunction:
             prompt="Test prompt",
             model=None,
             max_tokens=512,
-            seed=123
+            seed=123,
+            temperature=None
         )
     
     @patch('llm_sweep.OpenRouterClient')
@@ -553,6 +612,150 @@ class TestMainFunction:
         # This should fail at argument parsing level
         with pytest.raises(SystemExit):
             main()
+    
+    @patch('llm_sweep.OpenRouterClient')
+    @patch('sys.argv', ['llm_sweep.py', 'Test prompt', '--temperature', '0.2'])
+    def test_main_with_temperature(self, mock_client_class):
+        """Test that temperature parameter is passed to the LLM query"""
+        mock_client = Mock()
+        mock_client.query_llm.return_value = {
+            "choices": [{"message": {"content": "Temperature controlled response"}}],
+            "model": "test-model"
+        }
+        mock_client.get_response_text.return_value = "Temperature controlled response"
+        mock_client_class.return_value = mock_client
+        
+        captured_output = StringIO()
+        with patch('sys.stdout', captured_output):
+            result = main()
+        
+        assert result == 0
+        assert "Temperature controlled response" in captured_output.getvalue()
+        
+        # Verify that query_llm was called with the temperature parameter
+        mock_client.query_llm.assert_called_once_with(
+            prompt="Test prompt",
+            model=None,
+            max_tokens=512,
+            seed=None,
+            temperature=0.2
+        )
+    
+    @patch('llm_sweep.OpenRouterClient')
+    @patch('sys.argv', ['llm_sweep.py', 'Test prompt', '--temperature', '0.1', '--verbose'])
+    def test_main_with_temperature_verbose(self, mock_client_class):
+        """Test that temperature is shown in verbose output"""
+        mock_client = Mock()
+        mock_client.FREE_MODELS = ["test-model:free"]
+        mock_client.query_llm.return_value = {
+            "choices": [{"message": {"content": "Low temperature response"}}],
+            "model": "test-model:free",
+            "usage": {"total_tokens": 20}
+        }
+        mock_client.get_response_text.return_value = "Low temperature response"
+        mock_client_class.return_value = mock_client
+        
+        captured_output = StringIO()
+        with patch('sys.stdout', captured_output):
+            result = main()
+        
+        assert result == 0
+        output = captured_output.getvalue()
+        
+        # Should show temperature in verbose output
+        assert "Temperature: 0.1" in output
+        assert "Low temperature response" in output
+        
+        # Verify query_llm was called with temperature
+        mock_client.query_llm.assert_called_once_with(
+            prompt="Test prompt",
+            model=None,
+            max_tokens=512,
+            seed=None,
+            temperature=0.1
+        )
+    
+    @patch('llm_sweep.OpenRouterClient')
+    @patch('sys.argv', ['llm_sweep.py', 'Test prompt', '--repetitions', '2', '--temperature', '0.9'])
+    def test_main_temperature_with_repetitions(self, mock_client_class):
+        """Test that temperature is used for all repetitions"""
+        mock_client = Mock()
+        mock_client.query_llm.return_value = {
+            "choices": [{"message": {"content": "High temperature response"}}],
+            "model": "test-model"
+        }
+        mock_client.get_response_text.return_value = "High temperature response"
+        mock_client_class.return_value = mock_client
+        
+        captured_output = StringIO()
+        with patch('sys.stdout', captured_output):
+            result = main()
+        
+        assert result == 0
+        output = captured_output.getvalue()
+        
+        # Should have multiple responses
+        assert "=== Response 1 ===" in output
+        assert "=== Response 2 ===" in output
+        
+        # Verify query_llm was called twice with the same temperature
+        assert mock_client.query_llm.call_count == 2
+        for call in mock_client.query_llm.call_args_list:
+            args, kwargs = call
+            # Check that temperature=0.9 was passed in kwargs
+            assert kwargs.get('temperature') == 0.9
+    
+    @patch('llm_sweep.OpenRouterClient')
+    @patch('sys.argv', ['llm_sweep.py', 'Test prompt', '--temperature', '--0.5'])
+    def test_main_invalid_temperature_negative(self, mock_client_class):
+        """Test handling of invalid negative temperature values"""
+        # This should fail at argument parsing level
+        with pytest.raises(SystemExit):
+            main()
+    
+    @patch('llm_sweep.OpenRouterClient')
+    @patch('sys.argv', ['llm_sweep.py', 'Test prompt', '--temperature', '2.5'])
+    def test_main_invalid_temperature_too_high(self, mock_client_class):
+        """Test handling of temperature values above valid range"""
+        # This should fail at argument parsing level or validation
+        with pytest.raises(SystemExit):
+            main()
+    
+    @patch('llm_sweep.OpenRouterClient')
+    @patch('sys.argv', ['llm_sweep.py', 'Test prompt', '--temperature', 'invalid'])
+    def test_main_invalid_temperature_not_float(self, mock_client_class):
+        """Test handling of non-numeric temperature values"""
+        # This should fail at argument parsing level
+        with pytest.raises(SystemExit):
+            main()
+    
+    @patch('llm_sweep.OpenRouterClient')
+    @patch('sys.argv', ['llm_sweep.py', 'Test prompt', '--temperature', '0.3', '--seed', '123'])
+    def test_main_temperature_and_seed_combined(self, mock_client_class):
+        """Test that temperature and seed can be used together"""
+        mock_client = Mock()
+        mock_client.query_llm.return_value = {
+            "choices": [{"message": {"content": "Combined parameters response"}}],
+            "model": "test-model"
+        }
+        mock_client.get_response_text.return_value = "Combined parameters response"
+        mock_client_class.return_value = mock_client
+        
+        captured_output = StringIO()
+        with patch('sys.stdout', captured_output):
+            result = main()
+        
+        assert result == 0
+        assert "Combined parameters response" in captured_output.getvalue()
+        
+        # Verify that query_llm was called with both parameters
+        mock_client.query_llm.assert_called_once_with(
+            prompt="Test prompt",
+            model=None,
+            max_tokens=512,
+            seed=123,
+            temperature=0.3
+        )
 
 
 class TestIntegration:

@@ -49,7 +49,7 @@ class OpenRouterClient:
             "X-Title": "LLM Sweep Script"  # Optional: for tracking
         }
     
-    def query_llm(self, prompt: str, model: Optional[str] = None, max_tokens: int = 512, seed: Optional[int] = None) -> Dict[str, Any]:
+    def query_llm(self, prompt: str, model: Optional[str] = None, max_tokens: int = 512, seed: Optional[int] = None, temperature: Optional[float] = None) -> Dict[str, Any]:
         """
         Send a query to the specified LLM model
         
@@ -58,6 +58,7 @@ class OpenRouterClient:
             model: The model to use. If None, uses the first available free model
             max_tokens: Maximum number of tokens in the response
             seed: Random seed for reproducible responses. If None, no seed is used
+            temperature: Controls randomness (0.0-2.0). If None, uses default 0.7
             
         Returns:
             Dictionary containing the response from the API
@@ -78,7 +79,7 @@ class OpenRouterClient:
                 }
             ],
             "max_tokens": max_tokens,
-            "temperature": 0.7
+            "temperature": temperature if temperature is not None else 0.7
         }
         
         # Add seed if provided for reproducible responses
@@ -144,6 +145,8 @@ Examples:
   python llm_sweep.py "What's your favorite color?" --repetitions 5 --verbose
   python llm_sweep.py "Tell me a joke" --seed 42
   python llm_sweep.py "Random story" --repetitions 3 --seed 123 --verbose
+  python llm_sweep.py "Write creatively" --temperature 1.2
+  python llm_sweep.py "Be precise" --temperature 0.1 --seed 42 --verbose
         """
     )
     
@@ -191,6 +194,22 @@ Examples:
         help="Random seed for reproducible responses"
     )
     
+    def temperature_type(value):
+        """Validate temperature is a float between 0.0 and 2.0"""
+        try:
+            fval = float(value)
+            if fval < 0.0 or fval > 2.0:
+                raise argparse.ArgumentTypeError(f"Temperature must be between 0.0 and 2.0, got {fval}")
+            return fval
+        except ValueError:
+            raise argparse.ArgumentTypeError(f"Temperature must be a number, got '{value}'")
+    
+    parser.add_argument(
+        "--temperature",
+        type=temperature_type,
+        help="Controls randomness (0.0-2.0, default: 0.7)"
+    )
+    
     args = parser.parse_args()
     
     try:
@@ -218,6 +237,8 @@ Examples:
             print(f"Repetitions: {args.repetitions}")
             if args.seed is not None:
                 print(f"Seed: {args.seed}")
+            if args.temperature is not None:
+                print(f"Temperature: {args.temperature}")
             print("-" * 50)
         
         total_tokens = 0
@@ -230,7 +251,8 @@ Examples:
                 prompt=args.prompt,
                 model=args.model,
                 max_tokens=args.max_tokens,
-                seed=args.seed
+                seed=args.seed,
+                temperature=args.temperature
             )
             
             response_text = client.get_response_text(response_data)
