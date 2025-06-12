@@ -11,9 +11,10 @@ import requests
 import json
 import os
 from unittest.mock import Mock, patch, MagicMock, mock_open
-from llm_sweep import OpenRouterClient, main
+from llm_sweep import OpenRouterClient, main, create_response_record
 import sys
 from io import StringIO
+import argparse
 
 
 class TestOpenRouterClient:
@@ -1258,6 +1259,45 @@ class TestIntegration:
         call_args = mock_post.call_args
         payload = call_args[1]['json']
         assert payload['messages'][0]['content'] == "Hello, how are you?"
+
+
+def test_response_record_always_includes_parameters():
+    """Test that response record always includes seed and temperature parameters"""
+    args = argparse.Namespace(
+        model="test-model",
+        max_tokens=100,
+        seed=None,
+        temperature=None
+    )
+    response_data = {
+        "choices": [{"message": {"content": "test response"}}]
+    }
+    record = create_response_record(args, response_data, "test response", 0, 1, "test prompt")
+    
+    # Verify parameters are always included
+    assert "parameters" in record
+    assert "seed" in record["parameters"]
+    assert "temperature" in record["parameters"]
+    assert record["parameters"]["seed"] is None
+    assert record["parameters"]["temperature"] is None
+
+def test_response_record_with_specified_parameters():
+    """Test that response record includes specified seed and temperature values"""
+    args = argparse.Namespace(
+        model="test-model",
+        max_tokens=100,
+        seed=42,
+        temperature=0.8
+    )
+    response_data = {
+        "choices": [{"message": {"content": "test response"}}]
+    }
+    record = create_response_record(args, response_data, "test response", 0, 1, "test prompt")
+    
+    # Verify parameters are included with specified values
+    assert "parameters" in record
+    assert record["parameters"]["seed"] == 42
+    assert record["parameters"]["temperature"] == 0.8
 
 
 if __name__ == "__main__":

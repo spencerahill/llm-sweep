@@ -174,7 +174,9 @@ def create_response_record(args, response_data, response_text, start_time, end_t
         "parameters": {
             "max_tokens": args.max_tokens,
             "repetition": repetition,
-            "total_repetitions": total_repetitions
+            "total_repetitions": total_repetitions,
+            "seed": args.seed,
+            "temperature": args.temperature
         },
         "response": {
             "text": response_text
@@ -187,12 +189,6 @@ def create_response_record(args, response_data, response_text, start_time, end_t
             "python_version": platform.python_version()
         }
     }
-    
-    # Add optional parameters if they were specified
-    if args.seed is not None:
-        record["parameters"]["seed"] = args.seed
-    if args.temperature is not None:
-        record["parameters"]["temperature"] = args.temperature
     
     # Add usage information if available
     if 'usage' in response_data:
