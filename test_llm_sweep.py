@@ -320,6 +320,103 @@ class TestMainFunction:
         
         assert result == 1
         assert "Unexpected error:" in captured_error.getvalue()
+    
+    @patch('llm_sweep.OpenRouterClient')
+    @patch('sys.argv', ['llm_sweep.py', 'Test prompt', '--repetitions', '3'])
+    def test_main_multiple_repetitions(self, mock_client_class):
+        """Test multiple repetitions functionality"""
+        mock_client = Mock()
+        mock_client.query_llm.return_value = {
+            "choices": [{"message": {"content": "Response"}}],
+            "model": "test-model"
+        }
+        mock_client.get_response_text.return_value = "Response"
+        mock_client_class.return_value = mock_client
+        
+        captured_output = StringIO()
+        with patch('sys.stdout', captured_output):
+            result = main()
+        
+        assert result == 0
+        output = captured_output.getvalue()
+        
+        # Should contain response separators for multiple responses
+        assert "=== Response 1 ===" in output
+        assert "=== Response 2 ===" in output
+        assert "=== Response 3 ===" in output
+        
+        # Should call query_llm 3 times
+        assert mock_client.query_llm.call_count == 3
+        assert mock_client.get_response_text.call_count == 3
+    
+    @patch('llm_sweep.OpenRouterClient')
+    @patch('sys.argv', ['llm_sweep.py', 'Test prompt', '--repetitions', '2', '--verbose'])
+    def test_main_repetitions_verbose(self, mock_client_class):
+        """Test repetitions with verbose output"""
+        mock_client = Mock()
+        mock_client.FREE_MODELS = ["test-model:free"]
+        mock_client.query_llm.return_value = {
+            "choices": [{"message": {"content": "Verbose response"}}],
+            "model": "test-model:free",
+            "usage": {"total_tokens": 10}
+        }
+        mock_client.get_response_text.return_value = "Verbose response"
+        mock_client_class.return_value = mock_client
+        
+        captured_output = StringIO()
+        with patch('sys.stdout', captured_output):
+            result = main()
+        
+        assert result == 0
+        output = captured_output.getvalue()
+        
+        # Should show repetitions info
+        assert "Repetitions: 2" in output
+        assert "Total repetitions: 2" in output
+        assert "Total tokens used: 20" in output
+        
+        # Should have response separators
+        assert "=== Response 1 ===" in output
+        assert "=== Response 2 ===" in output
+    
+    @patch('llm_sweep.OpenRouterClient')
+    @patch('sys.argv', ['llm_sweep.py', 'Test prompt', '--repetitions', '0'])
+    def test_main_invalid_repetitions(self, mock_client_class):
+        """Test handling of invalid repetitions count"""
+        mock_client_class.return_value = Mock()
+        
+        captured_error = StringIO()
+        with patch('sys.stderr', captured_error):
+            result = main()
+        
+        assert result == 1
+        assert "repetitions must be a positive integer" in captured_error.getvalue()
+    
+    @patch('llm_sweep.OpenRouterClient')
+    @patch('sys.argv', ['llm_sweep.py', 'Test prompt', '--repetitions', '1'])
+    def test_main_single_repetition_no_separator(self, mock_client_class):
+        """Test that single repetition doesn't show response separators"""
+        mock_client = Mock()
+        mock_client.query_llm.return_value = {
+            "choices": [{"message": {"content": "Single response"}}],
+            "model": "test-model"
+        }
+        mock_client.get_response_text.return_value = "Single response"
+        mock_client_class.return_value = mock_client
+        
+        captured_output = StringIO()
+        with patch('sys.stdout', captured_output):
+            result = main()
+        
+        assert result == 0
+        output = captured_output.getvalue()
+        
+        # Should not contain response separators for single response
+        assert "=== Response 1 ===" not in output
+        assert "Single response" in output
+        
+        # Should call query_llm only once
+        assert mock_client.query_llm.call_count == 1
 
 
 class TestIntegration:

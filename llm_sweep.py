@@ -132,9 +132,11 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python llm-sweep.py "What is the capital of France?"
-  python llm-sweep.py "Explain quantum computing" --model meta-llama/llama-3.1-8b-instruct:free
-  python llm-sweep.py "Write a haiku about programming" --max-tokens 100
+  python llm_sweep.py "What is the capital of France?"
+  python llm_sweep.py "Explain quantum computing" --model meta-llama/llama-3.1-8b-instruct:free
+  python llm_sweep.py "Write a haiku about programming" --max-tokens 100
+  python llm_sweep.py "Generate a creative story" --repetitions 3
+  python llm_sweep.py "What's your favorite color?" --repetitions 5 --verbose
         """
     )
     
@@ -169,6 +171,13 @@ Examples:
         help="Enable verbose output"
     )
     
+    parser.add_argument(
+        "--repetitions",
+        type=int,
+        default=1,
+        help="Number of times to repeat the prompt (default: 1)"
+    )
+    
     args = parser.parse_args()
     
     try:
@@ -185,26 +194,51 @@ Examples:
             print("Error: prompt is required when not using --list-models", file=sys.stderr)
             return 1
         
+        # Validate repetitions count
+        if args.repetitions < 1:
+            print("Error: repetitions must be a positive integer", file=sys.stderr)
+            return 1
+        
         if args.verbose:
             print(f"Sending prompt to model: {args.model or client.FREE_MODELS[0]}")
             print(f"Prompt: {args.prompt}")
+            print(f"Repetitions: {args.repetitions}")
             print("-" * 50)
         
-        response_data = client.query_llm(
-            prompt=args.prompt,
-            model=args.model,
-            max_tokens=args.max_tokens
-        )
+        total_tokens = 0
         
-        response_text = client.get_response_text(response_data)
-        print(response_text)
+        for i in range(args.repetitions):
+            if args.repetitions > 1:
+                print(f"=== Response {i + 1} ===")
+            
+            response_data = client.query_llm(
+                prompt=args.prompt,
+                model=args.model,
+                max_tokens=args.max_tokens
+            )
+            
+            response_text = client.get_response_text(response_data)
+            print(response_text)
+            
+            if args.verbose:
+                print("-" * 30)
+                print(f"Model used: {response_data.get('model', 'Unknown')}")
+                if 'usage' in response_data:
+                    usage = response_data['usage']
+                    tokens = usage.get('total_tokens', 0)
+                    print(f"Tokens used: {tokens}")
+                    total_tokens += tokens
+                print("-" * 30)
+            
+            # Add spacing between responses (except for the last one)
+            if args.repetitions > 1 and i < args.repetitions - 1:
+                print()
         
-        if args.verbose:
+        if args.verbose and args.repetitions > 1:
             print("-" * 50)
-            print(f"Model used: {response_data.get('model', 'Unknown')}")
-            if 'usage' in response_data:
-                usage = response_data['usage']
-                print(f"Tokens used: {usage.get('total_tokens', 'Unknown')}")
+            print(f"Total repetitions: {args.repetitions}")
+            print(f"Total tokens used: {total_tokens}")
+            print("-" * 50)
         
         return 0
         
